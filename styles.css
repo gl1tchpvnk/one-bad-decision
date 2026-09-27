@@ -93,21 +93,31 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
   font-weight: 720;
 }
 
-.game-title span:last-child {
-  margin-left: clamp(12px, 6vw, 94px);
-  color: var(--accent);
+.game-title .title-damaged {
   position: relative;
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  color: transparent;
 }
 
-.game-title span:last-child::after {
-  content: "";
+/* One deliberate structural error: the lower half lands slightly late. */
+.game-title .title-damaged::before,
+.game-title .title-damaged::after {
+  content: attr(data-text);
   position: absolute;
-  left: 9%;
-  right: -2%;
-  top: 52%;
-  height: 1px;
-  background: var(--bg);
-  opacity: 0.72;
+  inset: 0;
+  color: var(--accent);
+  pointer-events: none;
+}
+
+.game-title .title-damaged::before {
+  clip-path: inset(0 0 50.5% 0);
+}
+
+.game-title .title-damaged::after {
+  clip-path: inset(51.7% 0 0 0);
+  transform: translateX(0.035em);
 }
 
 .tagline { margin: 44px 0 34px; font-size: clamp(18px, 2vw, 24px); color: #c8c7c0; }
@@ -152,19 +162,6 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .choice-button:active:not(:disabled) { transform: translateY(1px); }
 
 .understatement { margin: 14px 0 0; font-family: var(--mono); font-size: 11px; color: var(--faint); }
-
-.intro-mark {
-  position: absolute;
-  right: -0.08em;
-  top: 50%;
-  transform: translateY(-50%);
-  font-family: var(--mono);
-  font-size: clamp(250px, 38vw, 540px);
-  line-height: 0.75;
-  color: #171814;
-  font-weight: 700;
-  user-select: none;
-}
 
 .game-screen { padding: 38px 0 44px; }
 
@@ -246,11 +243,19 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .choice-button.is-selected { border-color: var(--accent); background: #191b17; }
 .choice-button.is-wrong { border-color: var(--danger); color: #e4b2aa; }
 
-.feedback-panel { margin-top: 18px; border-left: 1px solid var(--accent); padding: 2px 0 2px 18px; }
-.feedback-panel.is-failure { border-left-color: var(--danger); }
+.feedback-panel {
+  margin-top: 20px;
+  padding: 13px 0 2px;
+  border-top: 1px solid var(--accent);
+  display: grid;
+  grid-template-columns: minmax(142px, 0.32fr) minmax(0, 1fr);
+  gap: 22px;
+  align-items: baseline;
+}
+.feedback-panel.is-failure { border-top-color: var(--danger); }
 .feedback-label { display: block; color: var(--accent); font-size: 10px; }
 .feedback-panel.is-failure .feedback-label { color: var(--danger); }
-.feedback-text { margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.feedback-text { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 
 .result-screen,
 .review-screen {
@@ -299,8 +304,6 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
   .app-shell { width: min(100% - 30px, 680px); }
   .intro-screen { min-height: 68vh; padding-top: 64px; }
   .game-title { font-size: clamp(54px, 18vw, 104px); }
-  .game-title span:last-child { margin-left: 0; }
-  .intro-mark { right: -0.15em; top: 43%; font-size: clamp(220px, 68vw, 420px); }
   .game-screen { padding-top: 26px; }
   .run-header { grid-template-columns: 1fr auto 1fr; gap: 12px; }
   .game-grid { grid-template-columns: 1fr; gap: 38px; padding-top: 34px; }
@@ -335,6 +338,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
   .choice-button { min-height: 138px; padding: 14px 14px 16px; }
   .choice-text { font-size: clamp(25px, 9vw, 40px); }
   .choice-key { font-size: 8px; }
+  .game-title .title-damaged::after { transform: translateX(0.025em); }
+  .feedback-panel { grid-template-columns: 1fr; gap: 7px; }
   .result-screen, .review-screen { padding-top: 58px; }
   .result-title { font-size: clamp(50px, 17vw, 90px); }
   .review-title { font-size: clamp(42px, 14vw, 76px); }

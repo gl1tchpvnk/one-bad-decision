@@ -212,7 +212,7 @@
       subtext: "Still harmless. For the last time.",
       choices: ["LEFT", "RIGHT"],
       valid: () => ["left", "right"],
-      after: () => consequence("CONSEQUENCE ADDED — future instructions can force you to oppose your previous side.", () => addRule("alternate")),
+      after: () => consequence("Future instructions can force you to oppose your previous side.", () => addRule("alternate")),
     },
     {
       prompt: "How do you want this to hurt?",
@@ -248,7 +248,7 @@
       choices: ["HOLD", "BREAK"],
       valid: () => ["left"],
       failRule: () => ({ label: "INSTRUCTION", text: "HOLD is shorter than BREAK." }),
-      after: () => consequence("CONSEQUENCE ADDED — word length can now decide for you.", () => addRule("shorter")),
+      after: () => consequence("Word length can now decide for you.", () => addRule("shorter")),
     },
     {
       prompt: "Use RULE 01 and the word-length rule.",
@@ -284,7 +284,7 @@
       choices: ["BLUE", "PINK"],
       valid: () => ["right"],
       failRule: () => ({ label: "INSTRUCTION", text: "BLUE contains the letter E. PINK does not." }),
-      after: () => consequence("CONSEQUENCE ADDED — some letters are now unsafe.", () => addRule("noE")),
+      after: () => consequence("Some letters are now unsafe.", () => addRule("noE")),
     },
     {
       prompt: "Combine the active instructions.",
@@ -328,7 +328,7 @@
       choices: ["LEFT", "RIGHT"],
       valid: () => [sideFromHistory(3)],
       failRule: () => ({ label: "MEMORY", text: `Three decisions ago, you chose ${sideFromHistory(3).toUpperCase()}.` }),
-      after: () => consequence("CONSEQUENCE ADDED — older decisions can now become instructions.", () => addRule("threeBack")),
+      after: () => consequence("Older decisions can now become instructions.", () => addRule("threeBack")),
     },
     {
       prompt: "Cross one rule out.",
@@ -379,7 +379,7 @@
         return [prevShort ? "left" : "right"];
       },
       failRule: () => ({ label: "MEMORY", text: "Your previous answer determined whether SHORT or LONG was valid here." }),
-      after: () => consequence("CONSEQUENCE ADDED — even the shape of your last answer can matter.", () => addRule("previousWord")),
+      after: () => consequence("Even the shape of your last answer can matter.", () => addRule("previousWord")),
     },
     {
       warning: () => {
