@@ -203,7 +203,7 @@
       subtext: "No rules yet. That makes this easy.",
       choices: ["KEEP", "BREAK"],
       valid: () => ["left", "right"],
-      after: ({ side }) => consequence(`You chose ${side === "left" ? "KEEP" : "BREAK"}. The game noticed.`, () => {
+      after: ({ side }) => consequence("The game noticed which side you chose.", () => {
         state.selectedBranch.firstSide = side;
       }),
     },
@@ -446,8 +446,9 @@
   }
 
   function currentChoices(round) {
+    if (!round || !round.choices) throw new Error(`Round ${state.round} is missing an explicit choices definition.`);
     if (typeof round.choices === "function") return round.choices();
-    return round.choices || ["LEFT", "RIGHT"];
+    return round.choices;
   }
 
   function renderRules() {
