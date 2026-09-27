@@ -201,18 +201,18 @@
     {
       prompt: "Pick one.",
       subtext: "No rules yet. That makes this easy.",
-      choices: ["LEFT", "RIGHT"],
+      choices: ["KEEP", "BREAK"],
       valid: () => ["left", "right"],
-      after: ({ side }) => consequence(`You chose ${side.toUpperCase()}. The game noticed.`, () => {
+      after: ({ side }) => consequence(`You chose ${side === "left" ? "KEEP" : "BREAK"}. The game noticed.`, () => {
         state.selectedBranch.firstSide = side;
       }),
     },
     {
       prompt: "Again.",
       subtext: "Still harmless. For the last time.",
-      choices: ["LEFT", "RIGHT"],
+      choices: ["TAKE", "LEAVE"],
       valid: () => ["left", "right"],
-      after: () => consequence("Future instructions can force you to oppose your previous side.", () => addRule("alternate")),
+      after: () => consequence("Never choose the same side twice.", () => addRule("alternate")),
     },
     {
       prompt: "How do you want this to hurt?",
