@@ -11,9 +11,41 @@
 <body>
   <main id="app" class="app-shell" data-screen="intro" data-density="0">
     <section id="introScreen" class="screen intro-screen" aria-labelledby="gameTitle">
+      <div class="intro-brand" aria-label="gl1tchworks">
+        <img src="assets/gw-logo.png" alt="gl1tchworks" />
+      </div>
       <div class="intro-copy">
-        <p class="eyebrow">GL1TCHWORKS / GAME</p>
-        <h1 id="gameTitle" class="game-title"><span>ONE BAD</span><span class="title-damaged" data-text="DECISION">DECISION</span></h1>
+        <h1 id="gameTitle" class="game-title">
+          <span>ONE BAD</span>
+          <span class="title-decision">
+            DECISION
+            <svg class="stamp-x" viewBox="0 0 180 180" aria-hidden="true" focusable="false">
+              <defs>
+                <mask id="stampDryInk">
+                  <rect width="180" height="180" fill="white" />
+                  <g fill="black">
+                    <ellipse cx="50" cy="45" rx="12" ry="4" transform="rotate(18 50 45)" />
+                    <ellipse cx="86" cy="76" rx="9" ry="4" transform="rotate(-12 86 76)" />
+                    <ellipse cx="119" cy="111" rx="14" ry="4" transform="rotate(9 119 111)" />
+                    <ellipse cx="139" cy="54" rx="8" ry="3" transform="rotate(-18 139 54)" />
+                    <ellipse cx="59" cy="128" rx="11" ry="3" transform="rotate(12 59 128)" />
+                    <circle cx="73" cy="55" r="3" />
+                    <circle cx="109" cy="64" r="2.5" />
+                    <circle cx="130" cy="132" r="3.5" />
+                    <circle cx="45" cy="108" r="2.5" />
+                  </g>
+                </mask>
+              </defs>
+              <g class="stamp-ghost" mask="url(#stampDryInk)">
+                <path d="M38 33 L145 145" />
+              </g>
+              <g class="stamp-ink" mask="url(#stampDryInk)">
+                <path d="M35 34 L143 146" />
+                <path d="M144 31 L38 149" />
+              </g>
+            </svg>
+          </span>
+        </h1>
         <p class="tagline">Every choice changes something.</p>
         <button id="startButton" class="primary-action" type="button">MAKE THE FIRST ONE</button>
         <p class="understatement">You’ll live with it.</p>
@@ -39,12 +71,12 @@
       <div class="game-grid">
         <aside class="rules-panel" aria-labelledby="rulesHeading">
           <div class="section-heading-row">
-            <h2 id="rulesHeading" class="section-heading">ACTIVE RULES</h2>
+            <h2 id="rulesHeading" class="section-heading">RULES ON FILE</h2>
             <span id="ruleCount" class="muted-count">00</span>
           </div>
           <ol id="ruleList" class="rule-list"></ol>
           <div id="emptyRules" class="empty-rules">
-            <span>NO ACTIVE RULES.</span>
+            <span>NO RULES ON FILE.</span>
             <small>That won’t last.</small>
           </div>
           <div id="decisionGhost" class="decision-ghost" aria-hidden="true"></div>
@@ -136,8 +168,8 @@
     </section>
 
     <footer class="site-footer">
-      <span>ONE BAD DECISION / V1</span>
-      <span>RULES PERSIST.</span>
+      <span>YOUR CHOICE.</span>
+      <span>YOUR CONSEQUENCE.</span>
     </footer>
   </main>
 

@@ -3,56 +3,122 @@
 
   const TOTAL_ROUNDS = 20;
   const IS_TEST = new URLSearchParams(window.location.search).get("test") === "1";
-  const TRANSITION_MS = IS_TEST ? 8 : 760;
+  const TRANSITION_MS = IS_TEST ? 0 : 760;
+  const SECONDARY_FEEDBACK_MS = IS_TEST ? 0 : 520;
+
+  const SIDE_ORDER = ["left", "right"];
+  const feedbackPool = ["ACCEPTED.", "RULE FOLLOWED.", "STILL ALIVE.", "INTERESTING."];
 
   const ruleDefinitions = {
     alternate: {
       id: "alternate",
-      text: "When instructed, choose the opposite side from your previous decision.",
+      text: "Never choose the same side twice.",
+      test: ({ side, state }) => !lastSide(state) || side !== lastSide(state),
     },
     timer: {
       id: "timer",
-      text: "Decisions now expire after five seconds.",
+      text: "When in force, choose before five seconds expire.",
+      timing: "timer",
+      test: () => true,
     },
     wait: {
       id: "wait",
-      text: "A decision made in the first 1.2 seconds is invalid.",
+      text: "When in force, wait 1.2 seconds before choosing.",
+      timing: "wait",
+      test: () => true,
     },
     shorter: {
       id: "shorter",
-      text: "When instructed, choose the shorter word.",
+      text: "Choose the shorter word.",
+      test: ({ side, pair }) => pair.shorterSide === side,
     },
     noE: {
       id: "noE",
-      text: "When instructed, avoid choices containing the letter E.",
-    },
-    trustWarnings: {
-      id: "trustWarnings",
-      text: "WARNING text must be obeyed.",
-    },
-    doubtWarnings: {
-      id: "doubtWarnings",
-      text: "WARNING text is false. Do the opposite.",
+      text: "Avoid choices containing the letter E.",
+      test: ({ side, pair }) => !pair.meta[side].containsE,
     },
     threeBack: {
       id: "threeBack",
-      text: "When instructed, repeat the side chosen three decisions ago.",
+      text: "Repeat the side chosen three decisions ago.",
+      test: ({ side, state }) => {
+        const target = sideThreeBack(state);
+        return target ? side === target : true;
+      },
+    },
+    oppositeThreeBack: {
+      id: "oppositeThreeBack",
+      text: "Avoid the side chosen three decisions ago.",
+      test: ({ side, state }) => {
+        const target = sideThreeBack(state);
+        return target ? side !== target : true;
+      },
+    },
+    markedSide: {
+      id: "markedSide",
+      text: "When invoked, choose the side you marked.",
+      test: ({ side, rule }) => side === rule.meta.side,
+    },
+    erasedSide: {
+      id: "erasedSide",
+      text: "When invoked, avoid the side you erased.",
+      test: ({ side, rule }) => side !== rule.meta.side,
+    },
+    savedLength: {
+      id: "savedLength",
+      text: "Choose a word in the length category you saved.",
+      test: ({ side, pair, rule }) => pair.meta[side].lengthCategory === rule.meta.lengthCategory,
+    },
+    discardedLength: {
+      id: "discardedLength",
+      text: "Choose a word outside the length category you discarded.",
+      test: ({ side, pair, rule }) => pair.meta[side].lengthCategory !== rule.meta.lengthCategory,
+    },
+    sameFirst: {
+      id: "sameFirst",
+      text: "Choose the same side as your first decision.",
+      test: ({ side, state }) => side === state.selectedBranch.firstSide,
+    },
+    oppositeFirst: {
+      id: "oppositeFirst",
+      text: "Choose the opposite side from your first decision.",
+      test: ({ side, state }) => side !== state.selectedBranch.firstSide,
     },
     crossedApply: {
       id: "crossedApply",
-      text: "Crossed-out rules still apply.",
+      text: "Crossed-out rules still apply when they are IN FORCE.",
+      metaRule: true,
+      test: () => true,
     },
-    ignoreRule02: {
-      id: "ignoreRule02",
-      text: "Ignore RULE 02 when it appears to apply.",
-    },
-    previousWord: {
-      id: "previousWord",
-      text: "When instructed, choose the option that matches your previous answer's length category.",
+    deletedReturn: {
+      id: "deletedReturn",
+      text: "A deleted rule can return when explicitly invoked.",
+      test: (ctx) => {
+        const snapshot = ctx.rule.meta && ctx.rule.meta.targetSnapshot;
+        if (!snapshot) return true;
+        const def = ruleDefinitions[snapshot.id];
+        if (!def || snapshot.id === "deletedReturn") return true;
+        return def.test({ ...ctx, rule: snapshot });
+      },
     },
   };
 
-  const feedbackPool = ["ACCEPTED.", "RULE FOLLOWED.", "STILL ALIVE.", "INTERESTING."];
+  const rawPairTemplates = [
+    { id: "hold-release", choices: ["HOLD", "RELEASE"] },
+    { id: "mark-erase", choices: ["MARK", "ERASE"] },
+    { id: "keep-drop", choices: ["KEEP", "DROP"] },
+    { id: "stay-go", choices: ["STAY", "GO"] },
+    { id: "push-pull", choices: ["PUSH", "PULL"] },
+    { id: "allow-deny", choices: ["ALLOW", "DENY"] },
+    { id: "save-discard", choices: ["SAVE", "DISCARD"] },
+    { id: "accept-refuse", choices: ["ACCEPT", "REFUSE"] },
+    { id: "lock-open", choices: ["LOCK", "OPEN"] },
+    { id: "take-leave", choices: ["TAKE", "LEAVE"] },
+    { id: "keep-release", choices: ["KEEP", "RELEASE"] },
+    { id: "mark-drop", choices: ["MARK", "DROP"] },
+    { id: "literal-sides", choices: ["LEFT", "RIGHT"], minRound: 17, maxRound: 19, callbackOnly: true },
+  ];
+
+  const pairTemplates = rawPairTemplates.map(buildPairTemplate);
 
   const screens = {
     intro: document.getElementById("introScreen"),
@@ -69,6 +135,7 @@
     survivedCounter: document.getElementById("survivedCounter"),
     timerWrap: document.getElementById("timerWrap"),
     timerValue: document.getElementById("timerValue"),
+    rulesHeading: document.getElementById("rulesHeading"),
     ruleCount: document.getElementById("ruleCount"),
     ruleList: document.getElementById("ruleList"),
     emptyRules: document.getElementById("emptyRules"),
@@ -115,9 +182,10 @@
       ruleHistory: [],
       choiceHistory: [],
       selectedBranch: {},
-      timerMode: false,
-      waitMode: false,
-      warningMode: null,
+      decisionSchedule: new Set(),
+      usedDecisionIds: new Set(),
+      usedCheckPairIds: new Set(),
+      roundPlans: new Map(),
       failed: false,
       failure: null,
       currentRoundStartedAt: 0,
@@ -127,6 +195,7 @@
       transitionId: null,
       lastChoiceLabel: "",
       deletedRuleIds: new Set(),
+      currentInForceIds: new Set(),
     };
   }
 
@@ -134,7 +203,7 @@
     clearTimers();
     const fresh = createInitialState();
     Object.assign(state, fresh);
-    state.deletedRuleIds = fresh.deletedRuleIds;
+    state.decisionSchedule = generateDecisionSchedule();
     els.app.className = "app-shell";
     els.app.dataset.density = "0";
   }
@@ -151,26 +220,108 @@
     return String(value).padStart(2, "0");
   }
 
+  function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  function shuffle(items) {
+    const copy = items.slice();
+    for (let i = copy.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+  }
+
+  function sample(items) {
+    return items[Math.floor(Math.random() * items.length)];
+  }
+
+  function chooseN(rangeStart, rangeEnd, count) {
+    const values = [];
+    for (let n = rangeStart; n <= rangeEnd; n += 1) values.push(n);
+    return shuffle(values).slice(0, count).sort((a, b) => a - b);
+  }
+
+  function generateDecisionSchedule() {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const lateCount = Math.random() < 0.5 ? 2 : 3;
+      const rounds = [
+        ...chooseN(3, 7, 2),
+        ...chooseN(8, 13, 2),
+        ...chooseN(14, 19, lateCount),
+      ].sort((a, b) => a - b);
+      if (maxConsecutive(rounds) <= 2 && maxGap(rounds) <= 5) return new Set(rounds);
+    }
+    return new Set([3, 6, 9, 12, 15, 18]);
+  }
+
+  function maxConsecutive(rounds) {
+    let max = 0;
+    let current = 0;
+    let previous = null;
+    rounds.forEach((round) => {
+      current = previous !== null && round === previous + 1 ? current + 1 : 1;
+      max = Math.max(max, current);
+      previous = round;
+    });
+    return max;
+  }
+
+  function maxGap(rounds) {
+    const points = [2, ...rounds, 20];
+    let gap = 0;
+    for (let i = 1; i < points.length; i += 1) gap = Math.max(gap, points[i] - points[i - 1]);
+    return gap;
+  }
+
+  function buildPairTemplate(raw) {
+    const [left, right] = raw.choices;
+    const meta = {
+      left: buildWordMeta(left),
+      right: buildWordMeta(right),
+    };
+    let shorterSide = null;
+    if (meta.left.length !== meta.right.length) shorterSide = meta.left.length < meta.right.length ? "left" : "right";
+    return { ...raw, meta, shorterSide };
+  }
+
+  function buildWordMeta(label) {
+    const clean = label.replace(/[^A-Z]/gi, "");
+    const length = clean.length;
+    return {
+      length,
+      containsE: /e/i.test(clean),
+      lengthCategory: length <= 4 ? "short" : "long",
+    };
+  }
+
   function addRule(ruleId, options = {}) {
-    if (state.activeRules.some((rule) => rule.id === ruleId)) return;
+    if (state.activeRules.some((rule) => rule.id === ruleId)) return null;
     const def = ruleDefinitions[ruleId];
     if (!def) throw new Error(`Unknown rule: ${ruleId}`);
     const rule = {
-      ...def,
+      id: def.id,
+      text: options.text || def.text,
       number: state.ruleHistory.length + 1,
       crossed: Boolean(options.crossed),
-      ignored: Boolean(options.ignored),
+      removed: false,
+      meta: options.meta || {},
     };
     state.activeRules.push(rule);
     state.ruleHistory.push(rule);
     updateDensity();
+    return rule;
   }
 
   function removeRule(ruleId) {
     const target = state.activeRules.find((rule) => rule.id === ruleId);
-    if (!target) return;
-    state.activeRules = state.activeRules.filter((rule) => rule.id !== ruleId);
+    if (!target) return null;
+    state.activeRules = state.activeRules.filter((rule) => rule !== target);
+    target.removed = true;
     state.deletedRuleIds.add(ruleId);
+    updateDensity();
+    return target;
   }
 
   function setRuleCrossed(ruleId, crossed = true) {
@@ -179,11 +330,11 @@
   }
 
   function getRule(ruleId) {
-    return state.activeRules.find((rule) => rule.id === ruleId) || state.ruleHistory.find((rule) => rule.id === ruleId) || null;
+    return state.activeRules.find((rule) => rule.id === ruleId) || null;
   }
 
   function hasRule(ruleId) {
-    return state.activeRules.some((rule) => rule.id === ruleId);
+    return Boolean(getRule(ruleId));
   }
 
   function updateDensity() {
@@ -193,265 +344,374 @@
     els.app.classList.toggle("has-corruption", state.activeRules.length >= 7);
   }
 
-  function consequence(text, mutation) {
-    return { text, mutation };
+  function lastSide(targetState = state) {
+    return targetState.choiceHistory.length ? targetState.choiceHistory[targetState.choiceHistory.length - 1].side : null;
   }
 
-  const rounds = [
-    {
-      prompt: "Pick one.",
-      subtext: "No rules yet. That makes this easy.",
-      choices: ["KEEP", "BREAK"],
-      valid: () => ["left", "right"],
-      after: ({ side }) => consequence("The game noticed which side you chose.", () => {
-        state.selectedBranch.firstSide = side;
-      }),
-    },
-    {
-      prompt: "Again.",
-      subtext: "Still harmless. For the last time.",
-      choices: ["TAKE", "LEAVE"],
-      valid: () => ["left", "right"],
-      after: () => consequence("Never choose the same side twice.", () => addRule("alternate")),
-    },
-    {
-      prompt: "How do you want this to hurt?",
-      subtext: "Neither answer is safe. They are merely different.",
-      choices: ["FAST", "SLOW"],
-      valid: () => ["left", "right"],
-      after: ({ side }) => {
-        if (side === "left") {
-          return consequence("FAST accepted. Future decisions can expire.", () => {
-            state.timerMode = true;
-            state.selectedBranch.speed = "fast";
-            addRule("timer");
-          });
-        }
-        return consequence("SLOW accepted. Future decisions can reject impatience.", () => {
-          state.waitMode = true;
-          state.selectedBranch.speed = "slow";
-          addRule("wait");
-        });
-      },
-    },
-    {
-      kicker: "RULE CHECK",
-      prompt: "Follow RULE 01.",
-      subtext: "The rule list is no longer decorative.",
-      choices: ["LEFT", "RIGHT"],
-      valid: () => [oppositeSide(lastSide())],
-      failRule: () => ruleFailure("alternate"),
-    },
-    {
-      prompt: "Choose the shorter word.",
-      subtext: "A new rule can be simple. Simple still counts.",
-      choices: ["HOLD", "BREAK"],
-      valid: () => ["left"],
-      failRule: () => ({ label: "INSTRUCTION", text: "HOLD is shorter than BREAK." }),
-      after: () => consequence("Word length can now decide for you.", () => addRule("shorter")),
-    },
-    {
-      prompt: "Use RULE 01 and the word-length rule.",
-      subtext: "The correct side must also contain the shorter word.",
-      choices: () => lastSide() === "left" ? ["BREAK", "GO"] : ["GO", "BREAK"],
-      valid: () => [oppositeSide(lastSide())],
-      failRule: () => ruleFailure("alternate"),
-    },
-    {
-      prompt: "Keep RULE 01?",
-      subtext: "Deleting a rule can create a different kind of obligation.",
-      choices: ["KEEP", "DELETE"],
-      valid: () => ["left", "right"],
-      after: ({ side }) => {
-        if (side === "left") {
-          return consequence("RULE 01 stays active.", () => {
-            state.selectedBranch.rule01 = "kept";
-          });
-        }
-        return consequence("RULE 01 is deleted. It can still return when explicitly referenced.", () => {
-          state.selectedBranch.rule01 = "deleted";
-          removeRule("alternate");
-          addRule("ignoreRule02");
-          const replacement = getRule("ignoreRule02");
-          if (replacement) replacement.text = "Deleted RULE 01 returns when a later decision explicitly references it.";
-        });
-      },
-    },
-    {
-      kicker: "NEW CONSTRAINT",
-      prompt: "Avoid the letter E.",
-      subtext: "Only the visible choice text matters.",
-      choices: ["BLUE", "PINK"],
-      valid: () => ["right"],
-      failRule: () => ({ label: "INSTRUCTION", text: "BLUE contains the letter E. PINK does not." }),
-      after: () => consequence("Some letters are now unsafe.", () => addRule("noE")),
-    },
-    {
-      prompt: "Combine the active instructions.",
-      subtext: () => hasRule("alternate") ? "RULE 01, word length, and the letter rule all point to one side." : "The word-length and letter rules point to one side.",
-      choices: () => {
-        const target = hasRule("alternate") ? oppositeSide(lastSide()) : "left";
-        return target === "left" ? ["GO", "THERE"] : ["THERE", "GO"];
-      },
-      valid: () => [hasRule("alternate") ? oppositeSide(lastSide()) : "left"],
-      failRule: () => hasRule("alternate") ? ruleFailure("alternate") : ruleFailure("noE"),
-    },
-    {
-      prompt: "Do you trust warnings?",
-      subtext: "This answer will decide what WARNING means later.",
-      choices: ["TRUST", "DOUBT"],
-      valid: () => ["left", "right"],
-      after: ({ side }) => {
-        if (side === "left") {
-          return consequence("WARNING text is now binding.", () => {
-            state.warningMode = "trust";
-            addRule("trustWarnings");
-          });
-        }
-        return consequence("WARNING text is now false.", () => {
-          state.warningMode = "doubt";
-          addRule("doubtWarnings");
-        });
-      },
-    },
-    {
-      warning: "CHOOSE LEFT",
-      prompt: "Read carefully.",
-      subtext: "The warning has exactly the meaning you gave it.",
-      choices: ["LEFT", "RIGHT"],
-      valid: () => [state.warningMode === "trust" ? "left" : "right"],
-      failRule: () => state.warningMode === "trust" ? ruleFailure("trustWarnings") : ruleFailure("doubtWarnings"),
-    },
-    {
-      prompt: "Repeat the side from three decisions ago.",
-      subtext: "The game remembers even when you don’t.",
-      choices: ["LEFT", "RIGHT"],
-      valid: () => [sideFromHistory(3)],
-      failRule: () => ({ label: "MEMORY", text: `Three decisions ago, you chose ${sideFromHistory(3).toUpperCase()}.` }),
-      after: () => consequence("Older decisions can now become instructions.", () => addRule("threeBack")),
-    },
-    {
-      prompt: "Cross one rule out.",
-      subtext: "You are changing how the interface describes the rules, not what they do.",
-      choices: () => {
-        const shorter = getRule("shorter");
-        const noE = getRule("noE");
-        return [`RULE ${pad(shorter.number)}`, `RULE ${pad(noE.number)}`];
-      },
-      valid: () => ["left", "right"],
-      after: ({ side }) => consequence("The mark is cosmetic. The consequence is not.", () => {
-        const targetId = side === "left" ? "shorter" : "noE";
-        setRuleCrossed(targetId, true);
-        state.selectedBranch.crossedTarget = targetId;
-        addRule("crossedApply");
-      }),
-    },
-    {
-      prompt: "Obey the crossed-out rule.",
-      subtext: "Crossed out does not mean inactive.",
-      choices: () => state.selectedBranch.crossedTarget === "noE" ? ["THREE", "FOUR"] : ["LONGER", "CUT"],
-      valid: () => ["right"],
-      failRule: () => ruleFailure(state.selectedBranch.crossedTarget || "crossedApply"),
-    },
-    {
-      kicker: "MEMORY CHECK",
-      prompt: "Three back. Again.",
-      subtext: "No new trick. Just your own history.",
-      choices: ["LEFT", "RIGHT"],
-      valid: () => [sideFromHistory(3)],
-      failRule: () => ruleFailure("threeBack"),
-    },
-    {
-      warning: () => state.warningMode === "trust" ? "CHOOSE THE OPTION WITHOUT E" : "CHOOSE THE OPTION WITH E",
-      prompt: "Make the warning and the letter rule agree.",
-      subtext: "What WARNING means depends on what you chose earlier.",
-      choices: ["KEEP", "HOLD"],
-      valid: () => ["right"],
-      failRule: () => state.warningMode === "trust" ? ruleFailure("trustWarnings") : ruleFailure("doubtWarnings"),
-    },
-    {
-      prompt: "Match the length category of your previous answer.",
-      subtext: "Short means four letters or fewer. Long means five or more.",
-      choices: ["WAIT", "DECIDE"],
-      valid: () => {
-        const prev = state.lastChoiceLabel || "";
-        const prevShort = prev.length <= 4;
-        return [prevShort ? "left" : "right"];
-      },
-      failRule: () => ({ label: "MEMORY", text: "Your previous answer determined whether SHORT or LONG was valid here." }),
-      after: () => consequence("Even the shape of your last answer can matter.", () => addRule("previousWord")),
-    },
-    {
-      warning: () => {
-        const target = sideFromHistory(3);
-        const stated = state.warningMode === "trust" ? target : oppositeSide(target);
-        return `CHOOSE ${stated.toUpperCase()}`;
-      },
-      prompt: "WARNING and three-back agree.",
-      subtext: "They only agree if you remember what your WARNING rule means.",
-      choices: ["LEFT", "RIGHT"],
-      valid: () => [sideFromHistory(3)],
-      failRule: () => ruleFailure("threeBack"),
-    },
-    {
-      prompt: "Use RULE 01.",
-      subtext: () => state.selectedBranch.rule01 === "deleted" ? "You deleted it. You also created a rule saying it returns when explicitly referenced." : "You chose to keep it. This is what keeping means.",
-      choices: ["LEFT", "RIGHT"],
-      valid: () => [oppositeSide(lastSide())],
-      failRule: () => state.selectedBranch.rule01 === "deleted" ? ruleFailure("ignoreRule02") : ruleFailure("alternate"),
-    },
-    {
-      kicker: "FINAL DECISION",
-      warning: () => {
-        const target = sideFromHistory(3);
-        const stated = state.warningMode === "trust" ? target : oppositeSide(target);
-        return `CHOOSE ${stated.toUpperCase()}`;
-      },
-      prompt: "You made all of this.",
-      subtext: "Three-back, WARNING, and the length of your previous answer point to the same side. Find it.",
-      choices: () => {
-        const target = sideFromHistory(3);
-        const prevShort = (state.lastChoiceLabel || "").length <= 4;
-        const match = prevShort ? "HOLD" : "DECIDE";
-        const mismatch = prevShort ? "DECIDE" : "HOLD";
-        return target === "left" ? [match, mismatch] : [mismatch, match];
-      },
-      valid: () => [sideFromHistory(3)],
-      failRule: () => ruleFailure("threeBack"),
-    },
-  ];
-
-  function ruleFailure(ruleId) {
-    const rule = getRule(ruleId);
-    if (!rule) return { label: "RULE", text: "A rule you created was violated." };
-    return { label: `RULE ${pad(rule.number)}`, text: rule.text };
-  }
-
-  function lastSide() {
-    return state.choiceHistory.length ? state.choiceHistory[state.choiceHistory.length - 1].side : null;
-  }
-
-  function sideFromHistory(decisionsAgo) {
-    const index = state.choiceHistory.length - decisionsAgo;
-    if (index < 0 || !state.choiceHistory[index]) return "left";
-    return state.choiceHistory[index].side;
+  function sideThreeBack(targetState = state) {
+    const history = targetState.choiceHistory;
+    return history.length >= 3 ? history[history.length - 3].side : null;
   }
 
   function oppositeSide(side) {
     return side === "left" ? "right" : "left";
   }
 
-  function getRound() {
-    return rounds[state.round - 1];
+  function currentChoices(spec) {
+    return spec && spec.pair ? spec.pair.choices : ["KEEP", "BREAK"];
   }
 
-  function currentChoices(round) {
-    if (!round || !round.choices) throw new Error(`Round ${state.round} is missing an explicit choices definition.`);
-    if (typeof round.choices === "function") return round.choices();
-    return round.choices;
+  function getRuleFailure(rule) {
+    return {
+      label: `RULE ${pad(rule.number)} VIOLATED`,
+      text: rule.text,
+      ruleId: rule.id,
+    };
+  }
+
+  function testRule(rule, side, pair, targetState = state) {
+    const def = ruleDefinitions[rule.id];
+    if (!def) return true;
+    return def.test({ side, pair, state: targetState, rule });
+  }
+
+  function validSidesForRules(rules, pair, targetState = state) {
+    return SIDE_ORDER.filter((side) => rules.every((rule) => testRule(rule, side, pair, targetState)));
+  }
+
+  function firstViolatedRule(rules, side, pair) {
+    return rules.find((rule) => !testRule(rule, side, pair, state)) || null;
+  }
+
+  const decisionDefinitions = [
+    {
+      id: "fast-slow",
+      choices: ["FAST", "SLOW"],
+      earliestRound: 3,
+      latestRound: 7,
+      prompt: "Set the pace.",
+      applyChoice: ({ side }) => {
+        if (side === "left") {
+          addRule("timer");
+          state.selectedBranch.speed = "fast";
+          return "FAST accepted. Some future Rule Checks will expire.";
+        }
+        addRule("wait");
+        state.selectedBranch.speed = "slow";
+        return "SLOW accepted. Some future Rule Checks will reject impatience.";
+      },
+    },
+    {
+      id: "hold-release",
+      choices: ["HOLD", "RELEASE"],
+      earliestRound: 3,
+      latestRound: 10,
+      prompt: "What should control the words?",
+      applyChoice: ({ side }) => {
+        if (side === "left") {
+          addRule("shorter");
+          return "HOLD accepted. Word length can now decide for you.";
+        }
+        addRule("noE");
+        return "RELEASE accepted. One letter can now disqualify a choice.";
+      },
+    },
+    {
+      id: "accept-refuse",
+      choices: ["ACCEPT", "REFUSE"],
+      earliestRound: 5,
+      latestRound: 19,
+      prompt: "How far back should this reach?",
+      applyChoice: ({ side }) => {
+        if (side === "left") {
+          addRule("threeBack");
+          return "ACCEPT recorded. Three decisions ago can now become binding.";
+        }
+        addRule("oppositeThreeBack");
+        return "REFUSE recorded. Three decisions ago can now become forbidden.";
+      },
+    },
+    {
+      id: "mark-erase",
+      choices: ["MARK", "ERASE"],
+      earliestRound: 6,
+      latestRound: 19,
+      prompt: "Leave a mark.",
+      requires: () => state.choiceHistory.length >= 4,
+      applyChoice: ({ side }) => {
+        if (side === "left") {
+          addRule("markedSide", { meta: { side } });
+          return "MARK recorded. This physical side can be called back later.";
+        }
+        addRule("erasedSide", { meta: { side } });
+        return "ERASE recorded. This physical side can become forbidden later.";
+      },
+    },
+    {
+      id: "save-discard",
+      choices: ["SAVE", "DISCARD"],
+      earliestRound: 8,
+      latestRound: 19,
+      prompt: "What survives this decision?",
+      requires: () => state.choiceHistory.length >= 5,
+      applyChoice: ({ side, label }) => {
+        const lengthCategory = buildWordMeta(label).lengthCategory;
+        if (side === "left") {
+          addRule("savedLength", { meta: { lengthCategory } });
+          return `SAVE recorded. ${lengthCategory.toUpperCase()} words can be required later.`;
+        }
+        addRule("discardedLength", { meta: { lengthCategory } });
+        return `DISCARD recorded. ${lengthCategory.toUpperCase()} words can be rejected later.`;
+      },
+    },
+    {
+      id: "keep-delete",
+      choices: ["KEEP", "DELETE"],
+      earliestRound: 9,
+      latestRound: 19,
+      prompt: (plan) => `What happens to RULE ${pad(plan.targetRule.number)}?`,
+      requires: () => Boolean(findRemovableRule()),
+      prepare: () => ({ targetRule: findRemovableRule() }),
+      applyChoice: ({ side, plan }) => {
+        const target = plan.targetRule && getRule(plan.targetRule.id);
+        if (!target) return "Nothing moved. The system found no eligible rule.";
+        if (side === "left") {
+          setRuleCrossed(target.id, true);
+          addRule("crossedApply");
+          return `RULE ${pad(target.number)} stays on file. Crossing it out does not protect you.`;
+        }
+        const removed = removeRule(target.id);
+        if (removed) {
+          addRule("deletedReturn", {
+            text: `Deleted RULE ${pad(removed.number)} can return when explicitly invoked.`,
+            meta: { targetSnapshot: cloneRule(removed) },
+          });
+          return `RULE ${pad(removed.number)} deleted. The deletion created its own consequence.`;
+        }
+        return "The deletion failed cleanly. Nothing else changed.";
+      },
+    },
+    {
+      id: "open-close",
+      choices: ["OPEN", "CLOSE"],
+      earliestRound: 12,
+      latestRound: 19,
+      prompt: "Return to the beginning?",
+      requires: () => Boolean(state.selectedBranch.firstSide),
+      applyChoice: ({ side }) => {
+        if (side === "left") {
+          addRule("sameFirst");
+          return "OPEN recorded. Your first physical side can return later.";
+        }
+        addRule("oppositeFirst");
+        return "CLOSE recorded. Your first physical side can become the wrong one.";
+      },
+    },
+  ];
+
+  function cloneRule(rule) {
+    return {
+      id: rule.id,
+      text: rule.text,
+      number: rule.number,
+      crossed: rule.crossed,
+      removed: rule.removed,
+      meta: JSON.parse(JSON.stringify(rule.meta || {})),
+    };
+  }
+
+  function findRemovableRule() {
+    const excluded = new Set(["alternate", "timer", "wait", "crossedApply", "deletedReturn"]);
+    return [...state.activeRules].reverse().find((rule) => !excluded.has(rule.id) && !rule.crossed) || null;
+  }
+
+  function isDecisionEligible(def, round) {
+    if (state.usedDecisionIds.has(def.id)) return false;
+    if (round < def.earliestRound || round > def.latestRound) return false;
+    return !def.requires || def.requires();
+  }
+
+  function chooseDecisionDefinition(round) {
+    const eligible = decisionDefinitions.filter((def) => isDecisionEligible(def, round));
+    if (!eligible.length) {
+      const fallback = decisionDefinitions.find((def) => !state.usedDecisionIds.has(def.id) && (!def.requires || def.requires()));
+      if (!fallback) throw new Error(`No eligible Decision definition for round ${round}.`);
+      return fallback;
+    }
+    if (round <= 7) {
+      const speed = eligible.find((def) => def.id === "fast-slow");
+      if (speed) return speed;
+    }
+    return sample(eligible);
+  }
+
+  function createDecisionPlan(round) {
+    const def = chooseDecisionDefinition(round);
+    state.usedDecisionIds.add(def.id);
+    const prepared = def.prepare ? def.prepare() : {};
+    const choices = def.choices.slice();
+    const pair = buildPairTemplate({ id: `decision-${def.id}-${round}`, choices });
+    const plan = {
+      round,
+      type: "decision",
+      decisionId: def.id,
+      label: "DECISION",
+      prompt: typeof def.prompt === "function" ? def.prompt(prepared) : def.prompt,
+      subtext: "You are changing the system.",
+      pair,
+      validSides: ["left", "right"],
+      ...prepared,
+      applyChoice: def.applyChoice,
+    };
+    return plan;
+  }
+
+  function createCalibrationPlan(round) {
+    if (round === 1) {
+      return {
+        round,
+        type: "calibration",
+        label: "CALIBRATION 01",
+        prompt: "Pick one. Nothing can kill you yet.",
+        subtext: "The system is watching position, not meaning.",
+        pair: buildPairTemplate({ id: "calibration-1", choices: ["KEEP", "BREAK"] }),
+        validSides: ["left", "right"],
+        applyChoice: ({ side }) => {
+          state.selectedBranch.firstSide = side;
+          return {
+            label: "POSITION RECORDED.",
+            text: "Physical side stored.",
+          };
+        },
+      };
+    }
+    return {
+      round,
+      type: "calibration",
+      label: "CALIBRATION 02",
+      prompt: "Again. This one will matter later.",
+      subtext: "The system is still recording you.",
+      pair: buildPairTemplate({ id: "calibration-2", choices: ["TAKE", "LEAVE"] }),
+      validSides: ["left", "right"],
+      applyChoice: () => {
+        addRule("alternate");
+        return {
+          label: "PATTERN RECORDED.",
+          text: "The second position is stored.",
+          secondary: {
+            label: "CONSEQUENCE ADDED",
+            text: "Never choose the same side twice.",
+          },
+        };
+      },
+    };
+  }
+
+  function targetRuleCount(round) {
+    if (round <= 7) return 1;
+    if (round <= 12) return randomInt(1, 2);
+    if (round <= 16) return randomInt(2, 3);
+    if (round <= 19) return randomInt(3, 4);
+    return randomInt(4, 5);
+  }
+
+  function combinations(items, size) {
+    const output = [];
+    const walk = (start, chosen) => {
+      if (chosen.length === size) {
+        output.push(chosen.slice());
+        return;
+      }
+      for (let i = start; i <= items.length - (size - chosen.length); i += 1) {
+        chosen.push(items[i]);
+        walk(i + 1, chosen);
+        chosen.pop();
+      }
+    };
+    walk(0, []);
+    return output;
+  }
+
+  function pairIsEligible(pair, round) {
+    if (pair.minRound && round < pair.minRound) return false;
+    if (pair.maxRound && round > pair.maxRound) return false;
+    if (pair.callbackOnly && state.usedCheckPairIds.has(pair.id)) return false;
+    return true;
+  }
+
+  function hasSideConstraint(rules) {
+    return rules.some((rule) => {
+      const def = ruleDefinitions[rule.id];
+      return def && !def.timing && !def.metaRule;
+    });
+  }
+
+  function createRuleCheckPlan(round) {
+    const active = state.activeRules.slice();
+    if (!active.length) throw new Error(`Rule Check at round ${round} has no Rules On File.`);
+
+    const desired = Math.min(targetRuleCount(round), active.length);
+    const pairPool = shuffle(pairTemplates.filter((pair) => pairIsEligible(pair, round)));
+    const requireUnique = round >= 8;
+
+    for (let size = desired; size >= 1; size -= 1) {
+      const subsets = shuffle(combinations(active, size));
+      for (const rules of subsets) {
+        if (requireUnique && !hasSideConstraint(rules)) continue;
+        for (const pair of pairPool) {
+          const validSides = validSidesForRules(rules, pair);
+          if (!validSides.length) continue;
+          if (requireUnique && validSides.length !== 1) continue;
+          state.usedCheckPairIds.add(pair.id);
+          return makeRuleCheck(round, rules, pair, validSides);
+        }
+      }
+    }
+
+    // Safety fallback: find any solvable single-rule check. This should be rare and remains fair.
+    for (const rule of shuffle(active)) {
+      for (const pair of pairPool) {
+        const validSides = validSidesForRules([rule], pair);
+        if (validSides.length) {
+          state.usedCheckPairIds.add(pair.id);
+          return makeRuleCheck(round, [rule], pair, validSides);
+        }
+      }
+    }
+
+    throw new Error(`Unable to build a solvable Rule Check for round ${round}.`);
+  }
+
+  function makeRuleCheck(round, rules, pair, validSides) {
+    const count = rules.length;
+    let prompt = count === 1 ? "One rule. Follow it." : count === 2 ? "Two rules. Reconcile them." : "Reconcile the rules.";
+    if (round === TOTAL_ROUNDS) prompt = "Everything you kept is here.";
+    const timingRules = rules.filter((rule) => ruleDefinitions[rule.id] && ruleDefinitions[rule.id].timing);
+    return {
+      round,
+      type: "check",
+      label: round === TOTAL_ROUNDS ? "RULE CHECK / FINAL" : "RULE CHECK",
+      prompt,
+      subtext: "The system is testing you.",
+      pair,
+      inForceRules: rules,
+      validSides,
+      timingRules,
+    };
+  }
+
+  function getRoundPlan() {
+    if (state.roundPlans.has(state.round)) return state.roundPlans.get(state.round);
+    let plan;
+    if (state.round <= 2) plan = createCalibrationPlan(state.round);
+    else if (state.decisionSchedule.has(state.round)) plan = createDecisionPlan(state.round);
+    else plan = createRuleCheckPlan(state.round);
+    state.roundPlans.set(state.round, plan);
+    return plan;
   }
 
   function renderRules() {
+    const forceIds = state.currentInForceIds;
     els.ruleList.innerHTML = "";
     els.ruleCount.textContent = pad(state.activeRules.length);
     els.emptyRules.hidden = state.activeRules.length > 0;
@@ -461,34 +721,42 @@
       const li = document.createElement("li");
       li.className = "rule-item";
       if (rule.crossed) li.classList.add("is-crossed");
-      if (rule.ignored) li.classList.add("is-ignored");
-      li.innerHTML = `<span class="rule-number">RULE ${pad(rule.number)}</span><span class="rule-text"></span>`;
+      if (forceIds.has(rule.id)) li.classList.add("is-in-force");
+      li.innerHTML = `
+        <span class="rule-number">RULE ${pad(rule.number)}</span>
+        <span class="rule-text"></span>
+        <span class="rule-force">${forceIds.has(rule.id) ? "IN FORCE" : ""}</span>
+      `;
       li.querySelector(".rule-text").textContent = rule.text;
       els.ruleList.appendChild(li);
     });
   }
 
   function renderRound() {
-    const round = getRound();
-    if (!round) return finishRun();
-
+    const plan = getRoundPlan();
     state.inputLocked = false;
     state.currentRoundStartedAt = performance.now();
     clearTimerOnly();
+    state.currentInForceIds = new Set(plan.type === "check" ? plan.inForceRules.map((rule) => rule.id) : []);
 
     els.roundCounter.textContent = `${pad(state.round)} / ${TOTAL_ROUNDS}`;
     els.survivedCounter.textContent = pad(state.survived);
-    els.decisionType.textContent = state.round === TOTAL_ROUNDS ? "FINAL DECISION" : "DECISION";
-    els.warningText.textContent = typeof round.warning === "function" ? round.warning() : (round.warning || "");
-    els.promptKicker.textContent = round.kicker || "";
-    els.promptText.textContent = round.prompt;
-    els.promptSubtext.textContent = typeof round.subtext === "function" ? round.subtext() : (round.subtext || "");
+    els.decisionType.textContent = plan.label;
+    els.warningText.textContent = plan.type === "check" ? `${plan.inForceRules.length} ${plan.inForceRules.length === 1 ? "RULE" : "RULES"} IN FORCE` : "";
+    els.promptKicker.textContent = "";
+    els.promptText.textContent = plan.prompt;
+    els.promptSubtext.textContent = plan.subtext || "";
 
-    const [leftText, rightText] = currentChoices(round);
+    const [leftText, rightText] = currentChoices(plan);
     els.leftChoiceText.textContent = leftText;
     els.rightChoiceText.textContent = rightText;
-    els.leftChoiceNote.textContent = state.waitMode ? "WAIT RULE MAY APPLY" : "";
-    els.rightChoiceNote.textContent = state.timerMode ? "EXPIRY RULE MAY APPLY" : "";
+    els.leftChoiceNote.textContent = "";
+    els.rightChoiceNote.textContent = "";
+
+    const timerRule = plan.type === "check" && plan.inForceRules.find((rule) => rule.id === "timer");
+    const waitRule = plan.type === "check" && plan.inForceRules.find((rule) => rule.id === "wait");
+    if (waitRule) els.leftChoiceNote.textContent = "WAIT 1.2s";
+    if (timerRule) els.rightChoiceNote.textContent = "5.0s WINDOW";
 
     els.leftChoice.disabled = false;
     els.rightChoice.disabled = false;
@@ -500,11 +768,12 @@
 
     renderRules();
     updateDensity();
-    startRoundTimerIfNeeded();
+    startRoundTimerIfNeeded(plan);
   }
 
-  function startRoundTimerIfNeeded() {
-    if (!state.timerMode || state.round <= 3) {
+  function startRoundTimerIfNeeded(plan) {
+    const timerRule = plan.type === "check" && plan.inForceRules.find((rule) => rule.id === "timer");
+    if (!timerRule) {
       els.timerWrap.hidden = true;
       return;
     }
@@ -519,10 +788,7 @@
       els.timerWrap.classList.toggle("is-urgent", remaining <= 2000);
       if (remaining <= 0) {
         clearTimerOnly();
-        if (!state.inputLocked) {
-          const failure = ruleFailure("timer");
-          failRun(failure, "Time expired before you made a decision.");
-        }
+        if (!state.inputLocked) failRun(getRuleFailure(timerRule), "Time expired before you made a decision.");
         return;
       }
       state.timerId = requestAnimationFrame(tick);
@@ -542,15 +808,25 @@
     state.transitionId = null;
   }
 
+  function showFeedback(label, text, isFailure = false) {
+    els.feedbackPanel.hidden = false;
+    els.feedbackPanel.classList.toggle("is-failure", isFailure);
+    els.feedbackLabel.textContent = label;
+    els.feedbackText.textContent = text;
+  }
+
   function choose(side) {
     if (state.inputLocked || screens.game.hidden) return;
-    const round = getRound();
-    if (!round) return;
+    const plan = getRoundPlan();
+    if (!plan) return;
 
     const elapsed = performance.now() - state.currentRoundStartedAt;
-    if (state.waitMode && state.round > 3 && elapsed < 1200) {
-      failRun(ruleFailure("wait"), "You answered before the minimum wait elapsed.", side);
-      return;
+    if (plan.type === "check") {
+      const waitRule = plan.inForceRules.find((rule) => rule.id === "wait");
+      if (waitRule && elapsed < 1200) {
+        failRun(getRuleFailure(waitRule), "You answered before the minimum wait elapsed.", side);
+        return;
+      }
     }
 
     state.inputLocked = true;
@@ -558,41 +834,54 @@
     els.leftChoice.disabled = true;
     els.rightChoice.disabled = true;
 
-    const valid = round.valid ? round.valid() : ["left", "right"];
     const chosenButton = side === "left" ? els.leftChoice : els.rightChoice;
     chosenButton.classList.add("is-selected");
 
-    if (!valid.includes(side)) {
+    if (plan.type === "check" && !plan.validSides.includes(side)) {
       chosenButton.classList.add("is-wrong");
-      const failure = round.failRule ? round.failRule({ side }) : { label: "DECISION", text: "That option violated the active logic." };
+      const violated = firstViolatedRule(plan.inForceRules, side, plan.pair);
+      const failure = violated ? getRuleFailure(violated) : { label: "RULE CHECK FAILED", text: "That choice did not satisfy the rules in force." };
       failRun(failure, "The system rejected your choice.", side);
       return;
     }
 
-    const [leftText, rightText] = currentChoices(round);
+    const [leftText, rightText] = currentChoices(plan);
     const label = side === "left" ? leftText : rightText;
-    state.choiceHistory.push({ round: state.round, side, label });
+    state.choiceHistory.push({ round: state.round, side, label, type: plan.type });
     state.lastChoiceLabel = label;
     state.survived += 1;
 
     let result = null;
-    if (round.after) result = round.after({ side, label });
-    if (result && typeof result.mutation === "function") result.mutation();
+    if (plan.applyChoice) result = plan.applyChoice({ side, label, plan });
 
-    els.feedbackPanel.hidden = false;
-    els.feedbackLabel.textContent = result ? "CONSEQUENCE ADDED" : feedbackPool[(state.round + state.survived) % feedbackPool.length];
-    els.feedbackText.textContent = result ? result.text : "The decision holds.";
+    if (typeof result === "string") {
+      showFeedback("CONSEQUENCE ADDED", result);
+    } else if (result && result.label) {
+      showFeedback(result.label, result.text || "");
+    } else {
+      showFeedback(feedbackPool[(state.round + state.survived) % feedbackPool.length], "The decision holds.");
+    }
+
     renderRules();
 
-    if (state.round >= TOTAL_ROUNDS) {
-      state.transitionId = setTimeout(finishRun, IS_TEST ? 8 : 900);
+    const continueRun = () => {
+      if (state.round >= TOTAL_ROUNDS) {
+        finishRun();
+        return;
+      }
+      state.round += 1;
+      renderRound();
+    };
+
+    if (result && result.secondary) {
+      state.transitionId = setTimeout(() => {
+        showFeedback(result.secondary.label, result.secondary.text);
+        state.transitionId = setTimeout(continueRun, TRANSITION_MS);
+      }, SECONDARY_FEEDBACK_MS);
       return;
     }
 
-    state.transitionId = setTimeout(() => {
-      state.round += 1;
-      renderRound();
-    }, TRANSITION_MS);
+    state.transitionId = setTimeout(continueRun, TRANSITION_MS);
   }
 
   function failRun(failure, lead, side = null) {
@@ -608,15 +897,12 @@
       chosenButton.classList.add("is-selected", "is-wrong");
     }
 
-    els.feedbackPanel.hidden = false;
-    els.feedbackPanel.classList.add("is-failure");
-    els.feedbackLabel.textContent = "BAD DECISION.";
-    els.feedbackText.textContent = failure.text;
+    showFeedback("BAD DECISION.", failure.text, true);
 
     state.transitionId = setTimeout(() => {
       renderFailure(lead);
       showScreen("failure");
-    }, IS_TEST ? 8 : 900);
+    }, IS_TEST ? 0 : 900);
   }
 
   function renderFailure(lead) {
@@ -634,8 +920,9 @@
     state.ruleHistory.forEach((rule) => {
       const li = document.createElement("li");
       li.className = "review-rule-item";
+      const status = rule.removed ? " — DELETED" : rule.crossed ? " — CROSSED" : "";
       li.innerHTML = `<span class="rule-number">${pad(rule.number)}</span><span class="rule-text"></span>`;
-      li.querySelector(".rule-text").textContent = rule.text;
+      li.querySelector(".rule-text").textContent = `${rule.text}${status}`;
       els.reviewRuleList.appendChild(li);
     });
     if (!state.ruleHistory.length) {
@@ -677,11 +964,27 @@
     if (screens.game.hidden) return;
     const target = event.target;
     if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
-    if (["ArrowLeft", "ArrowRight", "a", "A", "d", "D"].includes(event.key)) {
-      event.preventDefault();
-    }
+    if (["ArrowLeft", "ArrowRight", "a", "A", "d", "D"].includes(event.key)) event.preventDefault();
     if (event.key === "ArrowLeft" || event.key === "a" || event.key === "A") choose("left");
     if (event.key === "ArrowRight" || event.key === "d" || event.key === "D") choose("right");
+  }
+
+  function getDebugState() {
+    const plan = state.roundPlans.get(state.round) || null;
+    return {
+      round: state.round,
+      survived: state.survived,
+      decisionSchedule: [...state.decisionSchedule],
+      usedDecisionIds: [...state.usedDecisionIds],
+      activeRuleIds: state.activeRules.map((rule) => rule.id),
+      inForceIds: [...state.currentInForceIds],
+      currentType: plan ? plan.type : null,
+      currentLabel: plan ? plan.label : null,
+      validSides: plan ? plan.validSides.slice() : [],
+      choices: plan ? plan.pair.choices.slice() : [],
+      failed: state.failed,
+      failure: state.failure ? { ...state.failure } : null,
+    };
   }
 
   els.startButton.addEventListener("click", startGame);
@@ -698,25 +1001,24 @@
 
   if (IS_TEST) {
     window.__OBD_DEBUG__ = {
-      getState: () => ({
-        round: state.round,
-        survived: state.survived,
-        waitMode: state.waitMode,
-        timerMode: state.timerMode,
-        warningMode: state.warningMode,
-        rule01: state.selectedBranch.rule01 || null,
-        crossedTarget: state.selectedBranch.crossedTarget || null,
-      }),
-      valid: () => {
-        const round = getRound();
-        return round && round.valid ? round.valid() : ["left", "right"];
+      start: startGame,
+      choose,
+      getState: getDebugState,
+      getPlan: () => {
+        const plan = getRoundPlan();
+        return {
+          round: plan.round,
+          type: plan.type,
+          label: plan.label,
+          choices: plan.pair.choices.slice(),
+          validSides: plan.validSides.slice(),
+          inForceIds: plan.inForceRules ? plan.inForceRules.map((rule) => rule.id) : [],
+          decisionId: plan.decisionId || null,
+        };
       },
-      choices: () => currentChoices(getRound()),
-      invalidReason: (side) => {
-        const round = getRound();
-        return round && round.failRule ? round.failRule({ side }) : { label: "DECISION", text: "That option violated the active logic." };
-      },
-      ageRound: (ms = 1500) => { state.currentRoundStartedAt -= ms; },
+      ageRound: (ms = 1400) => { state.currentRoundStartedAt -= ms; },
+      schedule: () => [...state.decisionSchedule],
+      forceRender: renderRound,
     };
   }
 
