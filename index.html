@@ -1,49 +1,178 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
-<title>Route 420</title>
-<meta name="description" content="Route 420 — a fast, filthy little arcade driving game. Drive stupid." />
-<meta property="og:type" content="website" />
-<meta property="og:title" content="Route 420" />
-<meta property="og:description" content="A fast, filthy little arcade driving game. Drive stupid." />
-<meta name="theme-color" content="#17150f" />
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Archivo+Black&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#111210" />
+  <meta name="description" content="ONE BAD DECISION — a minimalist psychological logic game where your choices permanently change the rules." />
+  <title>ONE BAD DECISION</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div id="app">
-    <div id="game-frame">
-      <canvas id="game-canvas" role="img" aria-label="Route 420 game"></canvas>
-      <div id="ui-layer"></div>
-    </div>
-  </div>
+  <main id="app" class="app-shell" data-screen="intro" data-density="0">
+    <section id="introScreen" class="screen intro-screen" aria-labelledby="gameTitle">
+      <div class="intro-brand" aria-label="gl1tchworks">
+        <img src="assets/gw-logo.png" alt="gl1tchworks" />
+      </div>
+      <div class="intro-copy">
+        <h1 id="gameTitle" class="game-title">
+          <span>ONE BAD</span>
+          <span class="title-decision">
+            DECISION
+            <svg class="stamp-x" viewBox="0 0 180 180" aria-hidden="true" focusable="false">
+              <defs>
+                <mask id="stampDryInk">
+                  <rect width="180" height="180" fill="white" />
+                  <g fill="black">
+                    <ellipse cx="50" cy="45" rx="12" ry="4" transform="rotate(18 50 45)" />
+                    <ellipse cx="86" cy="76" rx="9" ry="4" transform="rotate(-12 86 76)" />
+                    <ellipse cx="119" cy="111" rx="14" ry="4" transform="rotate(9 119 111)" />
+                    <ellipse cx="139" cy="54" rx="8" ry="3" transform="rotate(-18 139 54)" />
+                    <ellipse cx="59" cy="128" rx="11" ry="3" transform="rotate(12 59 128)" />
+                    <circle cx="73" cy="55" r="3" />
+                    <circle cx="109" cy="64" r="2.5" />
+                    <circle cx="130" cy="132" r="3.5" />
+                    <circle cx="45" cy="108" r="2.5" />
+                  </g>
+                </mask>
+              </defs>
+              <g class="stamp-ghost" mask="url(#stampDryInk)">
+                <path d="M38 33 L145 145" />
+              </g>
+              <g class="stamp-ink" mask="url(#stampDryInk)">
+                <path d="M35 34 L143 146" />
+                <path d="M144 31 L38 149" />
+              </g>
+            </svg>
+          </span>
+        </h1>
+        <p class="tagline">Every choice changes something.</p>
+        <button id="startButton" class="primary-action" type="button">MAKE THE FIRST ONE</button>
+        <p class="understatement">You’ll live with it.</p>
+      </div>
+    </section>
 
-  <script src="src/utils/constants.js"></script>
-  <script src="src/utils/utils.js"></script>
-  <script src="src/audio/AudioManager.js"></script>
-  <script src="src/core/GameState.js"></script>
-  <script src="src/core/InputManager.js"></script>
-  <script src="src/render/VehicleArt.js"></script>
-  <script src="src/render/ParticleSystem.js"></script>
-  <script src="src/render/Renderer.js"></script>
-  <script src="src/entities/Player.js"></script>
-  <script src="src/entities/Vehicle.js"></script>
-  <script src="src/systems/SpawnManager.js"></script>
-  <script src="src/systems/TrafficManager.js"></script>
-  <script src="src/systems/CollisionSystem.js"></script>
-  <script src="src/systems/HeatSystem.js"></script>
-  <script src="src/systems/BlazeSystem.js"></script>
-  <script src="src/systems/EscalationSystem.js"></script>
-  <script src="src/systems/Event420System.js"></script>
-  <script src="src/systems/ScoreSystem.js"></script>
-  <script src="src/ui/HUD.js"></script>
-  <script src="src/ui/Screens.js"></script>
-  <script src="src/ui/TouchControls.js"></script>
-  <script src="src/ui/DebugPanel.js"></script>
-  <script src="src/main.js"></script>
+    <section id="gameScreen" class="screen game-screen" hidden aria-live="polite">
+      <header class="run-header">
+        <div class="run-status">
+          <span class="label">ROUND</span>
+          <strong id="roundCounter">01 / 20</strong>
+        </div>
+        <div id="timerWrap" class="timer-wrap" hidden>
+          <span class="label">WINDOW</span>
+          <strong id="timerValue">5.0</strong>
+        </div>
+        <div class="run-status align-right">
+          <span class="label">SURVIVED</span>
+          <strong id="survivedCounter">00</strong>
+        </div>
+      </header>
+
+      <div class="game-grid">
+        <aside class="rules-panel" aria-labelledby="rulesHeading">
+          <div class="section-heading-row">
+            <h2 id="rulesHeading" class="section-heading">RULES ON FILE</h2>
+            <span id="ruleCount" class="muted-count">00</span>
+          </div>
+          <ol id="ruleList" class="rule-list"></ol>
+          <div id="emptyRules" class="empty-rules">
+            <span>NO RULES ON FILE.</span>
+            <small>That won’t last.</small>
+          </div>
+          <div id="decisionGhost" class="decision-ghost" aria-hidden="true"></div>
+        </aside>
+
+        <section class="decision-panel" aria-labelledby="promptText">
+          <div class="decision-meta">
+            <span id="decisionType" class="decision-type">DECISION</span>
+            <span id="warningText" class="warning-text"></span>
+          </div>
+
+          <div class="prompt-block">
+            <p id="promptKicker" class="prompt-kicker"></p>
+            <h2 id="promptText" class="prompt-text">Pick one.</h2>
+            <p id="promptSubtext" class="prompt-subtext"></p>
+          </div>
+
+          <div id="choiceGroup" class="choice-group" role="group" aria-label="Decision choices">
+            <button id="leftChoice" class="choice-button" type="button" data-side="left">
+              <span class="choice-key">A / ←</span>
+              <span id="leftChoiceText" class="choice-text">KEEP</span>
+              <span id="leftChoiceNote" class="choice-note"></span>
+            </button>
+            <button id="rightChoice" class="choice-button" type="button" data-side="right">
+              <span class="choice-key">D / →</span>
+              <span id="rightChoiceText" class="choice-text">BREAK</span>
+              <span id="rightChoiceNote" class="choice-note"></span>
+            </button>
+          </div>
+
+          <div id="feedbackPanel" class="feedback-panel" aria-live="assertive" hidden>
+            <span id="feedbackLabel" class="feedback-label">ACCEPTED.</span>
+            <p id="feedbackText" class="feedback-text"></p>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section id="failureScreen" class="screen result-screen" hidden aria-labelledby="failureTitle">
+      <div class="result-rule" aria-hidden="true"></div>
+      <p class="eyebrow">RUN TERMINATED</p>
+      <h1 id="failureTitle" class="result-title">BAD DECISION.</h1>
+      <p id="failureLead" class="result-lead">You broke a rule.</p>
+      <div class="failure-detail">
+        <span id="failureRuleLabel" class="failure-rule-label">RULE 01</span>
+        <strong id="failureRuleText" class="failure-rule-text"></strong>
+      </div>
+      <div class="result-stats">
+        <div><span>ROUND</span><strong id="failureRound">00 / 20</strong></div>
+        <div><span>SURVIVED</span><strong id="failureSurvived">00</strong></div>
+        <div><span>RULES</span><strong id="failureRules">00</strong></div>
+      </div>
+      <div class="result-actions">
+        <button id="retryButton" class="primary-action" type="button">TRY AGAIN</button>
+        <button id="reviewButton" class="text-action" type="button">REVIEW THE DAMAGE</button>
+      </div>
+    </section>
+
+    <section id="reviewScreen" class="screen review-screen" hidden aria-labelledby="reviewTitle">
+      <p class="eyebrow">POSTMORTEM</p>
+      <h1 id="reviewTitle" class="review-title">REVIEW THE DAMAGE</h1>
+      <p class="review-intro">This is the system you built.</p>
+      <div class="review-grid">
+        <section class="review-section">
+          <h2>YOU ADDED</h2>
+          <ol id="reviewRuleList" class="review-rule-list"></ol>
+        </section>
+        <section class="review-section review-summary">
+          <div><span>FINAL ROUND</span><strong id="reviewRound">00 / 20</strong></div>
+          <div><span>DECISIONS SURVIVED</span><strong id="reviewSurvived">00</strong></div>
+          <div><span>CAUSE OF FAILURE</span><strong id="reviewCause">—</strong></div>
+        </section>
+      </div>
+      <button id="reviewRestartButton" class="primary-action" type="button">MAKE ANOTHER BAD DECISION</button>
+    </section>
+
+    <section id="winScreen" class="screen result-screen win-screen" hidden aria-labelledby="winTitle">
+      <p class="eyebrow">RUN COMPLETE</p>
+      <h1 id="winTitle" class="result-title">YOU SURVIVED YOURSELF.</h1>
+      <p class="result-lead">20 decisions.<br />Every problem was yours.</p>
+      <div class="win-rules-wrap">
+        <div class="section-heading-row">
+          <h2 class="section-heading">FINAL RULESET</h2>
+          <span id="winRuleCount" class="muted-count">00</span>
+        </div>
+        <ol id="winRuleList" class="review-rule-list"></ol>
+      </div>
+      <button id="winRestartButton" class="primary-action" type="button">DO IT AGAIN</button>
+    </section>
+
+    <footer class="site-footer">
+      <span>YOUR CHOICE.</span>
+      <span>YOUR CONSEQUENCE.</span>
+    </footer>
+  </main>
+
+  <script src="game.js"></script>
 </body>
 </html>

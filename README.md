@@ -1,16 +1,22 @@
-# ROUTE 420
+# ONE BAD DECISION
 
-A fast arcade driving game about hot rods, near misses, HEAT, and BLAZE.
+A minimalist psychological logic game where harmless choices build the rules that later test you.
 
-Drive recklessly — near misses and tight passes build HEAT, multiplying your risk bonuses up to x5. Collect green pickups to fill the BLAZE meter, then pop it for a short burst of chaos and bonus score. Survive to 4:20 and Route 420 fires one randomized event that flips the road on its head for the rest of the run.
+## Run locally
 
-## Controls
+No build step or dependencies are required. Open `index.html` directly, or serve the folder with any static server (for example `python -m http.server 8000`).
 
-**Desktop**
-- `← / A` — left
-- `→ / D` — right
-- `SPACE / ↑` — BLAZE (once the meter's full)
-- `P / ESC` — pause
+## Files
 
-**Mobile**
-- Touch controls for LEFT, RIGHT, and BLAZE, plus PAUSE/HOME buttons in the HUD.
+- `index.html` — screens and accessible controls
+- `styles.css` — visual system and responsive layout
+- `game.js` — calibration, constrained Decision scheduling, Rules On File / IN FORCE logic, solvable Rule Checks, keyboard/touch behavior
+- `assets/gw-logo.png` — gl1tchworks mark
+
+## Deploy
+
+Compatible with GitHub Pages as-is. Put the files at the repository root, keep `assets/gw-logo.png` inside `assets/`, and publish from the `main` branch root.
+
+## V1 scope
+
+Runs are always 20 rounds. Rounds 1–2 are fixed calibration; Rounds 3–19 use constrained Decision placement and curated solvable Rule Checks; Round 20 is always the final Rule Check. V1 intentionally excludes full procedural generation, leaderboards, accounts, audio, achievements, Web3, social sharing, Daily Challenge, and additional modes.
